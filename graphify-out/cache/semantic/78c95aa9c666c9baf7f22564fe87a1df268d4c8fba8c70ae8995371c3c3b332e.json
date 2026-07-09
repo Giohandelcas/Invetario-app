@@ -1,0 +1,1 @@
+{"nodes": [], "edges": [{"source": "app_page_page", "target": "public_vercel_vercellogomark", "relation": "references", "confidence": "EXTRACTED", "confidence_score": 1.0, "source_file": "app/page.tsx", "source_location": "app/page.tsx:44-50", "weight": 1.0}], "hyperedges": []}
