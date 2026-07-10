@@ -28,6 +28,18 @@ Ambos módulos consumen la misma base de datos a través de un **backend indepen
 - **Backend**: NestJS, expone una API REST (o tRPC) consumida por ambos frontends.
 - **Base de datos**: PostgreSQL, única fuente de verdad para inventario, productos y órdenes.
 
+### 2.1 Estructura de Repos (decidido)
+
+Se optó por **3 repos separados** (no monorepo), como carpetas hermanas en `Desktop/`:
+
+| Repo | Rol | Stack |
+|------|-----|-------|
+| `inventario-app` | Panel de administración (Backoffice) — **este repo** | Next.js (TypeScript) |
+| `inventario-api` | Backend API, fuente única de verdad | NestJS + PostgreSQL/Prisma |
+| `inventario-tienda` | Tienda pública (Storefront) | Next.js (TypeScript) |
+
+`inventario-api` y `inventario-tienda` fueron inicializados con `git init` local (sin remoto en GitHub todavía).
+
 ---
 
 ## 3. Requisitos Funcionales
