@@ -1,17 +1,21 @@
 "use server";
 
+import { redirect } from "next/navigation";
+import { ApiError, apiFetch } from "@/lib/api/client";
+import { endpoints } from "@/lib/api/endpoints";
+import { createSession } from "@/lib/auth/session";
+import type { Role } from "@/types/api";
+
 export interface LoginState {
   error?: string;
 }
 
-/**
- * `inventario-api` todavía no expone un endpoint de login: `RolesGuard`
- * resuelve todo actor como PUBLICO hasta que exista `JwtStrategy`
- * (requerimientos.md, Próximos Pasos #7). Este action valida el formulario y
- * deja el punto de integración listo — cuando el backend tenga
- * `POST /auth/login`, reemplazar el cuerpo por la llamada real seguida de
- * `createSession()` (lib/auth/session.ts) y `redirect("/")`.
- */
+interface LoginResponse {
+  accessToken: string;
+  user: { id: string; name: string; role: Role };
+}
+
+/** POST /auth/login (inventario-api/src/auth) — ver API-CONTRACTS.md. */
 export async function loginAction(
   _prevState: LoginState,
   formData: FormData,
@@ -23,8 +27,29 @@ export async function loginAction(
     return { error: "Email y contraseña son obligatorios." };
   }
 
-  return {
-    error:
-      "Login no disponible todavía: inventario-api no implementa autenticación real (ver requerimientos.md, Próximos Pasos #7).",
-  };
+  let response: LoginResponse;
+  try {
+    response = await apiFetch<LoginResponse>(endpoints.auth.login(), {
+      method: "POST",
+      body: { email, password },
+      withAuth: false,
+    });
+  } catch (error) {
+    if (error instanceof ApiError && error.status === 401) {
+      return { error: "Email o contraseña incorrectos." };
+    }
+    return {
+      error:
+        "No se pudo conectar con inventario-api. Verificá que esté corriendo y que API_URL apunte a él.",
+    };
+  }
+
+  await createSession({
+    userId: response.user.id,
+    name: response.user.name,
+    role: response.user.role,
+    token: response.accessToken,
+  });
+
+  redirect("/");
 }

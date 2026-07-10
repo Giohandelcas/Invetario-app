@@ -42,13 +42,14 @@ export default async function OverviewPage() {
         </Card>
       </div>
       <p className="text-sm text-muted-foreground">
-        Los datos reales de estas tarjetas llegan de{" "}
+        Estas tarjetas todavía son placeholder — falta conectar el fetch a{" "}
         <code className="rounded bg-muted px-1 py-0.5">GET /reports/*</code> y{" "}
         <code className="rounded bg-muted px-1 py-0.5">
           GET /inventory/low-stock-alerts
         </code>{" "}
-        una vez que <code className="rounded bg-muted px-1 py-0.5">inventario-api</code>{" "}
-        tenga JWT real (requerimientos.md, Próximos Pasos #7).
+        (el login real contra <code className="rounded bg-muted px-1 py-0.5">inventario-api</code>{" "}
+        ya funciona, ver <code className="rounded bg-muted px-1 py-0.5">features/products</code>{" "}
+        como referencia de fetch con sesión).
       </p>
     </div>
   );
