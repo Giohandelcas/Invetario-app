@@ -156,7 +156,7 @@ Matriz de permisos por rol: ver sección 9.
 3. ~~Definir roles y permisos exactos por endpoint.~~ ✅ Ver sección 9.
 4. ~~Definir estructura de carpetas del backend (NestJS).~~ ✅ 10 módulos de dominio implementados — ver sección 10.
 5. ~~Diseñar contratos de API (endpoints REST) para inventario, productos y pedidos.~~ ✅ Implementados y probados end-to-end — ver `inventario-api/docs/API-CONTRACTS.md`.
-6. Definir estructura de carpetas del frontend (Next.js) — pendiente tanto en `inventario-app` como en `inventario-tienda`, ninguno de los dos tiene todavía nada más allá del scaffold de `create-next-app`.
+6. ~~Definir estructura de carpetas del frontend (Next.js) en `inventario-app`.~~ ✅ Ver sección 11. `inventario-tienda` sigue pendiente (repo hermano, fuera de este documento).
 7. Implementar el módulo de autenticación (JWT + Passport) — hoy `RolesGuard` existe y aplica la matriz de la sección 9, pero resuelve todo actor como PUBLICO porque no hay `JwtStrategy` real; toda ruta no pública devuelve 403 hasta que esto se implemente. La matriz asume un JWT con claim `actorType` (`internal`/`customer`) y `role` para actores internos.
 8. Conectar `DATABASE_URL` a una instancia persistente de PostgreSQL (Railway/Render/Fly.io, sección 5) y correr `prisma migrate dev` para tener historial real de migraciones — lo probado hasta ahora corrió contra un Postgres local efímero (`npx prisma dev`) con el schema aplicado vía `prisma db push`, que no genera migraciones versionadas.
 9. Implementar notificaciones (RF-20, RF-23) — no hay módulo de email ni de notificaciones internas todavía; los cambios de estado de pedido no notifican a nadie.
@@ -243,3 +243,42 @@ src/
 Detalle de cada endpoint (método, ruta, actor permitido, DTO) en [`inventario-api/docs/API-CONTRACTS.md`](../inventario-api/docs/API-CONTRACTS.md).
 
 **Nota sobre Prisma 7**: esta versión de Prisma rompe con lo que dice el entrenamiento del asistente — `PrismaClient` ya no acepta una connection string embebida en el schema, exige un *driver adapter* explícito (`@prisma/adapter-pg` para Postgres) pasado al constructor. `prisma.config.ts` (generado por `prisma init`) solo lo lee el CLI (`migrate`, `generate`, `db push`), nunca el `PrismaClient` en runtime — por eso `PrismaService` arma su propio adapter desde `process.env.DATABASE_URL`. También, por defecto el generador emite el cliente como ESM (`import.meta.url` en el código generado), lo que rompe al cargarse desde un proyecto NestJS en CommonJS — se fijó con `moduleFormat = "cjs"` en el bloque `generator client` de `schema.prisma`.
+
+---
+
+## 11. Estructura del Frontend — `inventario-app` (implementado)
+
+App Router (Next.js 16) organizado por route groups, con el layout del panel protegido por sesión y navegación filtrada por rol:
+
+```text
+app/
+├── (auth)/login/          Login (Server Action stub — ver nota JWT abajo)
+├── (dashboard)/           Requiere sesión (lib/auth/dal.ts → verifySession)
+│   ├── layout.tsx          AppSidebar (nav filtrada por rol) + header
+│   ├── page.tsx             Resumen
+│   ├── productos/            RF-01/02/14/15 — único módulo con fetch+tabla real (referencia)
+│   ├── categorias/            RF-06
+│   ├── proveedores/            RF-07 (ADMIN, BODEGA)
+│   ├── ordenes-compra/          RF-08 (ADMIN, BODEGA)
+│   ├── inventario/               movimientos (RF-03/04) + alertas (RF-05, ADMIN/BODEGA)
+│   ├── pedidos/                   RF-10/17/18
+│   ├── usuarios/                   RF-09 (ADMIN)
+│   ├── reportes/                    RF-11 (ADMIN)
+│   └── auditoria/                    RF-12 (ADMIN)
+├── layout.tsx             Root layout (fuentes, Toaster, TooltipProvider)
+proxy.ts                  Redirect optimista a /login sin cookie de sesión (Next 16 renombró Middleware → Proxy)
+lib/
+├── auth/                  session.ts (cookie cifrada con jose), dal.ts (verifySession/requireRole), permissions.ts (nav por rol), actions.ts (logout)
+├── api/                   client.ts (fetch wrapper server-only + Bearer), endpoints.ts (paths de API-CONTRACTS.md)
+└── roles.ts, utils.ts
+features/<módulo>/         api.ts + components/ por módulo de dominio (hoy solo `products` completo; el resto son placeholders con la ruta y el rol ya resueltos)
+types/api.ts               DTOs espejo de inventario-api/prisma/schema.prisma
+components/ui/             shadcn/ui (style "base-nova", sobre @base-ui/react — usa prop `render`, no `asChild` de Radix)
+```
+
+Decisiones registradas:
+
+- **Sin JWT real todavía** (punto 7 de esta lista): el login es un Server Action que valida el form y devuelve un error explícito; `lib/auth/session.ts` guarda una sesión local (cookie HttpOnly cifrada con `jose`) que en el futuro envolverá el JWT emitido por `inventario-api`. Mientras tanto, `proxy.ts` + `verifySession()` redirigen todo a `/login` — mismo comportamiento fail-closed que `RolesGuard` en el backend, no es un bug.
+- El gating de navegación (`lib/auth/permissions.ts`) es solo UX (qué links mostrar); la autorización real vive y se re-verifica en `inventario-api` (`permissions.matrix.ts` + `RolesGuard`).
+- shadcn/ui se inicializó con su versión actual (`style: "base-nova"`, sobre `@base-ui/react` en vez de Radix): la composición polimórfica usa `render={<Link .../>}` en lugar de `asChild` + hijo — revisar `node_modules/@base-ui/react/docs/react/utils/use-render.md` antes de asumir la API de Radix.
+- Paleta y tipografía (slate + verde stock, Fira Sans/Fira Code) elegidas con `ui-ux-pro-max` para un dashboard denso en datos; tokens en `app/globals.css`.
