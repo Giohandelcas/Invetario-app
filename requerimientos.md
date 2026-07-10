@@ -154,8 +154,13 @@ Matriz de permisos por rol: ver sección 9.
 1. ~~Definir el modelo de datos detallado (diagrama ER).~~ ✅ Ver sección 6.
 2. ~~Resolver mecanismo de reserva de stock en checkout.~~ ✅ Decremento inmediato — ver sección 6.
 3. ~~Definir roles y permisos exactos por endpoint.~~ ✅ Ver sección 9.
-4. Definir estructura de carpetas del backend (NestJS) y frontend (Next.js).
-5. Diseñar contratos de API (endpoints REST) para inventario, productos y pedidos — al definirlos, aplicar los guards de rol según la matriz de la sección 9.
+4. ~~Definir estructura de carpetas del backend (NestJS).~~ ✅ 10 módulos de dominio implementados — ver sección 10.
+5. ~~Diseñar contratos de API (endpoints REST) para inventario, productos y pedidos.~~ ✅ Implementados y probados end-to-end — ver `inventario-api/docs/API-CONTRACTS.md`.
+6. Definir estructura de carpetas del frontend (Next.js) — pendiente tanto en `inventario-app` como en `inventario-tienda`, ninguno de los dos tiene todavía nada más allá del scaffold de `create-next-app`.
+7. Implementar el módulo de autenticación (JWT + Passport) — hoy `RolesGuard` existe y aplica la matriz de la sección 9, pero resuelve todo actor como PUBLICO porque no hay `JwtStrategy` real; toda ruta no pública devuelve 403 hasta que esto se implemente. La matriz asume un JWT con claim `actorType` (`internal`/`customer`) y `role` para actores internos.
+8. Conectar `DATABASE_URL` a una instancia persistente de PostgreSQL (Railway/Render/Fly.io, sección 5) y correr `prisma migrate dev` para tener historial real de migraciones — lo probado hasta ahora corrió contra un Postgres local efímero (`npx prisma dev`) con el schema aplicado vía `prisma db push`, que no genera migraciones versionadas.
+9. Implementar notificaciones (RF-20, RF-23) — no hay módulo de email ni de notificaciones internas todavía; los cambios de estado de pedido no notifican a nadie.
+10. Extender `AuditLog` (RF-12) más allá de rol de usuario y precio/costo de producto — ver "Alcance actual de RF-12" en `inventario-api/docs/API-CONTRACTS.md`.
 
 ---
 
@@ -208,6 +213,33 @@ Actores del sistema (RF-09, RF-21):
 
 ### Notas de implementación
 
-- Toda ruta de backoffice exige estar autenticado como uno de los tres roles internos; toda ruta de cliente autenticada exige sesión de cliente. El catálogo público (`GET /products`, `GET /categories`) no exige autenticación.
-- Los pedidos con checkout de invitado no requieren sesión de cliente: el `Customer` se crea/reutiliza por email en el momento del checkout (ver sección 6, "Decisiones de diseño" en `inventario-api/prisma/ER-DIAGRAM.md`), y el pedido queda asociado a ese `Customer` aunque no haya sesión.
-- La restricción "Ver productos sin costo" para Vendedor es a nivel de campo, no de endpoint completo — el mismo `GET /products/:id` debe omitir `cost` según el rol de quien lo llama, no ser una ruta separada.
+- No hay un prefijo `/admin/*` separado — cada ruta individual declara `@RequirePermission(resource, action)` (o `@Public()`), y `RolesGuard` la resuelve contra la matriz en tiempo real. Toda ruta no marcada `@Public()` exige un actor autenticado que la matriz permita para ese resource+action; el catálogo público (`GET /products`, `GET /categories`) es la excepción explícita.
+- Los pedidos con checkout de invitado no requieren JWT de cliente: el `Customer` se crea/reutiliza por email en el momento del checkout (ver sección 6, "Decisiones de diseño" en `inventario-api/prisma/ER-DIAGRAM.md`), y el pedido queda asociado a ese `Customer` aunque no haya sesión.
+- La restricción "Ver productos sin costo" para Vendedor es a nivel de campo, no de endpoint completo — el mismo `GET /products/:id` omite `cost` según el actor que llama, no es una ruta separada.
+- La matriz vive también como constantes tipadas en [`inventario-api/src/auth/permissions.matrix.ts`](../inventario-api/src/auth/permissions.matrix.ts), y `RolesGuard` (`inventario-api/src/auth/guards/roles.guard.ts`) la consume directamente en cada request — implementado y probado, no solo diseñado. Ver el detalle completo de cada endpoint en [`inventario-api/docs/API-CONTRACTS.md`](../inventario-api/docs/API-CONTRACTS.md).
+
+---
+
+## 10. Estructura del Backend (implementado)
+
+`inventario-api` está organizado en 10 módulos de dominio NestJS, cada uno con `*.module.ts` + `*.controller.ts` + `*.service.ts` + `dto/`, todos usando Prisma directamente (sin capa de repositorio intermedia — no había necesidad real de esa abstracción sobre un solo ORM):
+
+```text
+src/
+├── prisma/          PrismaService (wrap de PrismaClient con driver adapter @prisma/adapter-pg — ver nota abajo)
+├── auth/             permissions.matrix.ts, RolesGuard, decoradores @RequirePermission/@Public/@CurrentUser
+├── audit/            AuditLog (RF-12) — módulo global, otros services lo inyectan
+├── users/             Usuarios internos (RF-09)
+├── customers/         Clientes de la tienda (RF-19)
+├── categories/         Categorías y subcategorías (RF-06)
+├── products/           Productos, imágenes, variantes (RF-01/02/14/15)
+├── suppliers/           Proveedores (RF-07)
+├── inventory/            Movimientos de stock, ajustes, alertas (RF-03/04/05) — el único punto que muta ProductVariant.stock
+├── purchase-orders/       Órdenes de compra a proveedor (RF-08)
+├── orders/                 Pedidos de la tienda, checkout (RF-10/17/18)
+└── reports/                 Reportes agregados (RF-11)
+```
+
+Detalle de cada endpoint (método, ruta, actor permitido, DTO) en [`inventario-api/docs/API-CONTRACTS.md`](../inventario-api/docs/API-CONTRACTS.md).
+
+**Nota sobre Prisma 7**: esta versión de Prisma rompe con lo que dice el entrenamiento del asistente — `PrismaClient` ya no acepta una connection string embebida en el schema, exige un *driver adapter* explícito (`@prisma/adapter-pg` para Postgres) pasado al constructor. `prisma.config.ts` (generado por `prisma init`) solo lo lee el CLI (`migrate`, `generate`, `db push`), nunca el `PrismaClient` en runtime — por eso `PrismaService` arma su propio adapter desde `process.env.DATABASE_URL`. También, por defecto el generador emite el cliente como ESM (`import.meta.url` en el código generado), lo que rompe al cargarse desde un proyecto NestJS en CommonJS — se fijó con `moduleFormat = "cjs"` en el bloque `generator client` de `schema.prisma`.
