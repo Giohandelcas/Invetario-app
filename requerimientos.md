@@ -137,9 +137,7 @@ Modelo implementado como schema de Prisma en [`inventario-api/prisma/schema.pris
 
 - RF-18 — reserva de stock en checkout: **decremento inmediato** al confirmar el pedido (no reserva con expiración/carritos abandonados). Se ejecuta dentro de la misma transacción que crea el `Order`, sus `OrderItem` y el `InventoryMovement` de tipo `VENTA_SALIDA` (RNF-01). No se necesita una tabla de reservas con TTL.
 
-**Pendiente de resolver:**
-
-- Matriz de permisos por rol y por endpoint.
+Matriz de permisos por rol: ver sección 9.
 
 ---
 
@@ -154,6 +152,62 @@ Modelo implementado como schema de Prisma en [`inventario-api/prisma/schema.pris
 ## 8. Próximos Pasos
 
 1. ~~Definir el modelo de datos detallado (diagrama ER).~~ ✅ Ver sección 6.
-2. Definir estructura de carpetas del backend (NestJS) y frontend (Next.js).
-3. Diseñar contratos de API (endpoints REST) para inventario, productos y pedidos.
-4. Definir roles y permisos exactos por endpoint.
+2. ~~Resolver mecanismo de reserva de stock en checkout.~~ ✅ Decremento inmediato — ver sección 6.
+3. ~~Definir roles y permisos exactos por endpoint.~~ ✅ Ver sección 9.
+4. Definir estructura de carpetas del backend (NestJS) y frontend (Next.js).
+5. Diseñar contratos de API (endpoints REST) para inventario, productos y pedidos — al definirlos, aplicar los guards de rol según la matriz de la sección 9.
+
+---
+
+## 9. Matriz de Permisos por Rol
+
+Actores del sistema (RF-09, RF-21):
+
+- **Admin**, **Vendedor**, **Bodega** — usuarios internos (`User.role`, backoffice). Todas las rutas de backoffice requieren estar autenticado como alguno de estos tres (RNF-02); la tabla de abajo especifica *cuáles* de los tres, no si se requiere login (siempre se requiere).
+- **Cliente** — usuario de la tienda, autenticado o invitado (RF-19). "Propio" significa que solo puede operar sobre sus propios recursos (su perfil, sus pedidos), nunca los de otro cliente.
+- **Público** — sin autenticación (visitantes del storefront).
+
+**Supuestos de negocio** (confirmados): Vendedor no ve costo/margen de productos, solo Admin. Vendedor no edita productos (solo lectura); cualquier alta/edición de catálogo pasa por Admin.
+
+| Recurso | Acción | Admin | Vendedor | Bodega | Cliente | Público |
+|---|---|:---:|:---:|:---:|:---:|:---:|
+| **Usuarios internos** (RF-09) | Crear / Editar / Eliminar | ✅ | ❌ | ❌ | ❌ | ❌ |
+| | Ver listado/detalle | ✅ | ❌ | ❌ | ❌ | ❌ |
+| **Clientes** | Registrarse | — | — | — | ✅ (self) | ✅ |
+| | Ver / editar propio perfil | ✅ | ✅ (lectura) | ❌ | ✅ propio | ❌ |
+| | Ver listado de clientes | ✅ | ✅ | ❌ | ❌ | ❌ |
+| **Categorías** (RF-06) | Crear / Editar / Eliminar | ✅ | ❌ | ❌ | ❌ | ❌ |
+| | Ver | ✅ | ✅ | ✅ | ✅ | ✅ |
+| **Productos** (RF-01) | Crear / Editar / Eliminar | ✅ | ❌ | ❌ | ❌ | ❌ |
+| | Ver (con costo) | ✅ | ❌ | ✅ | ❌ | ❌ |
+| | Ver (sin costo, precio + stock) | ✅ | ✅ | ✅ | — | — |
+| | Ver catálogo público (sin costo) | — | — | — | ✅ | ✅ |
+| **Variantes de producto** (RF-02) | Crear / Editar / Eliminar definición | ✅ | ❌ | ❌ | ❌ | ❌ |
+| | Editar umbral de stock bajo (RF-05) | ✅ | ❌ | ❌ | ❌ | ❌ |
+| | Ver stock | ✅ | ✅ | ✅ | ✅ (disponibilidad) | ✅ (disponibilidad) |
+| **Movimientos de inventario** (RF-03/04) | Crear ajuste manual / devolución | ✅ | ❌ | ✅ | ❌ | ❌ |
+| | Crear por recepción de compra | ✅ | ❌ | ✅ | ❌ | ❌ |
+| | Crear por venta (`VENTA_SALIDA`) | *(automático al confirmar `Order`, no vía endpoint directo)* | | | | |
+| | Ver historial | ✅ | ✅ (lectura) | ✅ | ❌ | ❌ |
+| **Alertas de stock bajo** (RF-05, RF-23) | Ver / recibir notificación | ✅ | ❌ | ✅ | ❌ | ❌ |
+| **Proveedores** (RF-07) | Crear / Editar / Eliminar | ✅ | ❌ | ❌ | ❌ | ❌ |
+| | Ver | ✅ | ❌ | ✅ | ❌ | ❌ |
+| **Órdenes de compra** (RF-08) | Crear / Editar (en Borrador) | ✅ | ❌ | ✅ | ❌ | ❌ |
+| | Marcar Ordenada / Cancelada | ✅ | ❌ | ✅ | ❌ | ❌ |
+| | Recibir mercancía (dispara movimiento) | ✅ | ❌ | ✅ | ❌ | ❌ |
+| | Ver | ✅ | ❌ | ✅ | ❌ | ❌ |
+| **Pedidos de clientes** (RF-10, RF-17, RF-18) | Crear (checkout) | — | — | — | ✅ propio (incl. invitado) | ✅ (checkout invitado) |
+| | Ver propio pedido / historial | ✅ | ✅ | ✅ (solo lectura logística) | ✅ propio | ❌ |
+| | Ver todos los pedidos | ✅ | ✅ | ✅ | ❌ | ❌ |
+| | Cambiar estado: Pendiente → Confirmado → Pagado | ✅ | ✅ | ❌ | ❌ | ❌ |
+| | Cambiar estado: Pagado → Enviado → Entregado | ✅ | ❌ | ✅ | ❌ | ❌ |
+| | Cancelar pedido | ✅ | ✅ | ❌ | ❌ | ❌ |
+| **Reportes** (RF-11) | Ver | ✅ | ❌ | ❌ | ❌ | ❌ |
+| **Log de auditoría** (RF-12) | Ver | ✅ | ❌ | ❌ | ❌ | ❌ |
+| | Crear / Editar / Eliminar | *(no existe endpoint de escritura — se genera automáticamente en cada acción auditada)* | | | | |
+
+### Notas de implementación
+
+- Toda ruta de backoffice exige estar autenticado como uno de los tres roles internos; toda ruta de cliente autenticada exige sesión de cliente. El catálogo público (`GET /products`, `GET /categories`) no exige autenticación.
+- Los pedidos con checkout de invitado no requieren sesión de cliente: el `Customer` se crea/reutiliza por email en el momento del checkout (ver sección 6, "Decisiones de diseño" en `inventario-api/prisma/ER-DIAGRAM.md`), y el pedido queda asociado a ese `Customer` aunque no haya sesión.
+- La restricción "Ver productos sin costo" para Vendedor es a nivel de campo, no de endpoint completo — el mismo `GET /products/:id` debe omitir `cost` según el rol de quien lo llama, no ser una ruta separada.
