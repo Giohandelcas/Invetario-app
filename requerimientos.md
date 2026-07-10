@@ -116,21 +116,30 @@ Se optó por **3 repos separados** (no monorepo), como carpetas hermanas en `Des
 
 ---
 
-## 6. Entidades Principales (borrador inicial)
+## 6. Entidades Principales (modelo detallado)
 
 - **Usuario** (interno: admin/vendedor/bodega)
 - **Cliente** (usuario de la tienda)
+- **Categoría** (auto-referencial, soporta subcategorías)
 - **Producto**
-- **Variante de Producto**
-- **Categoría**
+- **Imagen de Producto**
+- **Variante de Producto** (stock independiente, atributos en JSON)
 - **Proveedor**
-- **Orden de Compra** (a proveedor)
-- **Movimiento de Inventario** (entrada/salida/ajuste)
-- **Pedido** (de cliente, en la tienda)
-- **Detalle de Pedido**
-- **Log de Auditoría**
+- **Producto-Proveedor** (asociación N:M con SKU/costo por proveedor)
+- **Orden de Compra** (a proveedor) + **Detalle de Orden de Compra**
+- **Movimiento de Inventario** (entrada/salida/ajuste, append-only)
+- **Pedido** (de cliente, en la tienda) + **Detalle de Pedido**
+- **Log de Auditoría** (genérico vía entityType/entityId)
 
-*(Este modelo se detallará en un diagrama entidad-relación en una siguiente etapa.)*
+Modelo implementado como schema de Prisma en [`inventario-api/prisma/schema.prisma`](../inventario-api/prisma/schema.prisma) (validado con `prisma validate`, cliente generado con `prisma generate`). Diagrama ER completo y decisiones de diseño en [`inventario-api/prisma/ER-DIAGRAM.md`](../inventario-api/prisma/ER-DIAGRAM.md).
+
+**Decidido:**
+
+- RF-18 — reserva de stock en checkout: **decremento inmediato** al confirmar el pedido (no reserva con expiración/carritos abandonados). Se ejecuta dentro de la misma transacción que crea el `Order`, sus `OrderItem` y el `InventoryMovement` de tipo `VENTA_SALIDA` (RNF-01). No se necesita una tabla de reservas con TTL.
+
+**Pendiente de resolver:**
+
+- Matriz de permisos por rol y por endpoint.
 
 ---
 
@@ -144,7 +153,7 @@ Se optó por **3 repos separados** (no monorepo), como carpetas hermanas en `Des
 
 ## 8. Próximos Pasos
 
-1. Definir el modelo de datos detallado (diagrama ER).
+1. ~~Definir el modelo de datos detallado (diagrama ER).~~ ✅ Ver sección 6.
 2. Definir estructura de carpetas del backend (NestJS) y frontend (Next.js).
 3. Diseñar contratos de API (endpoints REST) para inventario, productos y pedidos.
 4. Definir roles y permisos exactos por endpoint.
