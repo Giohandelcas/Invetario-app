@@ -157,7 +157,7 @@ Matriz de permisos por rol: ver sección 9.
 4. ~~Definir estructura de carpetas del backend (NestJS).~~ ✅ 10 módulos de dominio implementados — ver sección 10.
 5. ~~Diseñar contratos de API (endpoints REST) para inventario, productos y pedidos.~~ ✅ Implementados y probados end-to-end — ver `inventario-api/docs/API-CONTRACTS.md`.
 6. ~~Definir estructura de carpetas del frontend (Next.js) en `inventario-app` e `inventario-tienda`.~~ ✅ Ver secciones 11 y 12.
-7. ~~Implementar el módulo de autenticación (JWT + Passport) para actores internos.~~ ✅ `POST /auth/login` + `JwtStrategy`/`OptionalJwtAuthGuard` en `inventario-api/src/auth` — ver `inventario-api/docs/API-CONTRACTS.md`. `inventario-app` (`lib/auth/session.ts`) ya puede envolver ese JWT en su cookie de sesión. Pendiente aparte: login de clientes (RF-19, `inventario-tienda`) y un `seed`/comando para crear el primer ADMIN sin acceso directo a la base.
+7. ~~Implementar el módulo de autenticación (JWT + Passport) para actores internos y clientes.~~ ✅ `POST /auth/login` (internos) y `POST /customers/login` (RF-19, clientes) en `inventario-api/src/auth`/`src/customers` — mismo `JwtStrategy`/`OptionalJwtAuthGuard`, payload `{ actorType: 'internal'|'customer', ... }`. Ver `inventario-api/docs/API-CONTRACTS.md` y sección 12 (frontend de `inventario-tienda`).
 8. Conectar `DATABASE_URL` a una instancia persistente de PostgreSQL (Railway/Render/Fly.io, sección 5) y correr `prisma migrate dev` para tener historial real de migraciones — lo probado hasta ahora corrió contra un Postgres local efímero (`npx prisma dev`) con el schema aplicado vía `prisma db push`, que no genera migraciones versionadas.
 9. Implementar notificaciones (RF-20, RF-23) — no hay módulo de email ni de notificaciones internas todavía; los cambios de estado de pedido no notifican a nadie.
 10. Extender `AuditLog` (RF-12) más allá de rol de usuario y precio/costo de producto — ver "Alcance actual de RF-12" en `inventario-api/docs/API-CONTRACTS.md`.
@@ -298,28 +298,40 @@ app/
 ├── checkout/                RF-17/18 — Client Component (necesita el carrito) que llama a un
 │   ├── page.tsx                Server Action directamente (no <form action=fn>, para poder
 │   ├── actions.ts               limpiar el carrito y mostrar la confirmación sin round-trip extra)
-│   └── order-confirmation.tsx
-├── cuenta/                  RF-19
-│   ├── page.tsx               Login — placeholder honesto (RF-19 sin backend, ver nota abajo)
-│   └── registro/                POST /customers/register — funciona hoy, es PUBLICO
-├── pedidos/[id]/page.tsx     Placeholder — ver nota sobre GET /orders/:id abajo
-└── layout.tsx                Root layout (fuentes, SiteHeader/Footer, CartProvider, Toaster)
+│   └── order-confirmation.tsx    Adjunta el Bearer si hay sesión (apiFetch, default withAuth) —
+│                                  el pedido queda asociado a la cuenta en vez de crear un guest
+├── cuenta/                  RF-19 — login/registro de cliente, funcional
+│   ├── page.tsx               Resumen (nombre/email + logout) o prompt de login/registro
+│   ├── login/                   POST /customers/login → createSession()
+│   ├── registro/                 POST /customers/register + login encadenado (misma sesión)
+│   └── pedidos/page.tsx           Historial — requireSession(), GET /orders (propios)
+├── pedidos/[id]/page.tsx     requireSession() + GET /orders/:id (403/404 → notFound())
+└── layout.tsx                Root layout (fuentes, SiteHeader/Footer, CartProvider, Toaster);
+                               async — lee la sesión para pasarle el nombre al header
 lib/
-├── api/                     client.ts (fetch wrapper server-only, sin Authorization — no hay
-│                              sesión de cliente todavía), endpoints.ts
-└── cart/cart-context.tsx     Carrito 100% client-side (Context + localStorage) — no hay
-                               endpoint de carrito en la API, se manda como items[] recién en
-                               POST /orders al confirmar
-features/<módulo>/           api.ts + components/ (hoy solo `products`; `categories` solo api.ts)
+├── api/                     client.ts (fetch wrapper server-only; adjunta Authorization por
+│                              default si hay sesión — withAuth:false para login/registro),
+│                              endpoints.ts
+├── auth/                    session.ts (cookie cifrada con jose, mismo patrón que
+│                              inventario-app), dal.ts (requireSession → redirect a
+│                              /cuenta/login), actions.ts (logout)
+├── cart/cart-context.tsx     Carrito 100% client-side (Context + localStorage) — no hay
+│                              endpoint de carrito en la API, se manda como items[] recién en
+│                              POST /orders al confirmar
+└── order-status.ts           Labels en español de OrderStatus
+features/<módulo>/           api.ts + components/ (`products` completo; `categories`/`orders` solo api.ts)
 types/api.ts                 Subset de DTOs relevante al storefront — sin `cost` (el actor
-                              PUBLICO/CLIENTE nunca lo recibe, ni siquiera como campo opcional)
+                              PUBLICO/CLIENTE nunca lo recibe, ni siquiera como campo opcional).
+                              OrderItem sin variante/producto anidados: GET /orders/:id
+                              devuelve solo productVariantId (verificado contra la API real)
 ```
 
 Decisiones registradas:
 
-- **Sin login de clientes todavía** (RF-19): `inventario-api` expone `POST /customers/register` (funciona, es `PUBLICO`) pero no tiene endpoint de login ni JWT para actor `customer` — a diferencia de `inventario-app`, acá no hay ningún `lib/auth/session.ts` que envolver, sería código sin nada real que llamar. `/cuenta` es honesto sobre esto en vez de simular un login que no puede funcionar.
-- **`GET /orders/:id` no es alcanzable por un invitado**: la matriz de permisos (sección 9) exige actor ADMIN/VENDEDOR/BODEGA/CLIENTE para leer un pedido — ni siquiera el invitado que lo acaba de crear puede volver a consultarlo sin loguearse. Por eso el checkout muestra la confirmación con la respuesta directa de `POST /orders` (`order-confirmation.tsx`), y `pedidos/[id]` queda como placeholder para cuando exista login de clientes.
+- **Login de clientes** (RF-19, resuelto): mismo patrón que `inventario-app` — `POST /customers/login` en `inventario-api` (`AuthService.loginCustomer`, comparte `JwtStrategy`/`OptionalJwtAuthGuard` con el login interno, payload `{ actorType: 'customer', id }`) y `lib/auth/session.ts` envuelve ese JWT en una cookie local. Un cliente creado solo por checkout de invitado (sin `passwordHash`) no puede loguearse hasta registrar contraseña.
+- El registro (`/cuenta/registro`) encadena un login automático con las mismas credenciales — no le pide al usuario que las tipee dos veces.
+- El checkout adjunta el Bearer del cliente automáticamente si está logueado (comportamiento por default de `apiFetch`, no hace falta código extra): `inventario-api` (`OrdersService.resolveCustomerId`) asocia el pedido a esa cuenta en vez de crear un guest. `order-confirmation.tsx` muestra un mensaje distinto según `loggedIn` (link a "Mis pedidos" vs. aviso de guardar el número).
 - El precio y subtotal de cada línea del pedido los calcula `inventario-api` a partir de `productVariantId` — el carrito del cliente nunca manda un precio, solo cantidades.
 - Paleta y tipografía (azul + naranja CTA, Rubik/Nunito Sans) elegidas con `ui-ux-pro-max` para un catálogo e-commerce mobile-first (RNF-04); `next.config.ts` permite cualquier host `https` para `next/image` hasta que se elija Cloudinary/S3 (sección 5) — restringir apenas se decida (RNF-05).
 
-Probado end-to-end contra un Postgres local con datos reales: catálogo lista y filtra por categoría, ficha de producto con variante y stock, y `POST /orders` de invitado confirmado (decrementa stock, devuelve el pedido con la forma que espera `order-confirmation.tsx`).
+Probado end-to-end contra un Postgres local con datos reales: catálogo lista y filtra por categoría; checkout de invitado y logueado (el logueado asocia el pedido a la cuenta, verificado comparando `customerId`); login rechaza password incorrecta y guests sin contraseña registrada (401); historial de pedidos y detalle muestran datos reales y redirigen a login si no hay sesión; un pedido ajeno/inexistente en `/pedidos/:id` da 404.
